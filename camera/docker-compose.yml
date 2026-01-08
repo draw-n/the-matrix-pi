@@ -1,0 +1,8 @@
+services:
+  usbcam:
+    build: .
+    ports:
+      - "100:100"
+    devices:
+      - "/dev/video0:/dev/video0"
+    restart: unless-stopped
