@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const axios = require("axios");
 const { v4: uuidv4 } = require("uuid");
 require("dotenv").config();
 
@@ -32,30 +33,30 @@ let state = loadState();
 /* ================= DUET API ================= */
 
 async function getPrinterStatus() {
-    const res = await fetch(`${DUET_BASE}/machine/rr_model?key=state.status`);
-    if (!res.ok) throw new Error("Failed to fetch printer status");
-    const text = await res.text();
-    console.log(text);
-    return res.json();
+    const connect = await axios.get(`${DUET_BASE}/rr_connect?password=`);
+    console.log("Connected to printer:", connect.data);
+    const res = await axios.get(
+        `${DUET_BASE}/machine/rr_model?key=state.status`
+    );
+    if (res.status !== 200) throw new Error("Failed to fetch printer status");
+    console.log(res.data);
+    return res.data;
 }
 
 /* ================= BACKEND API ================= */
 
 async function notifyBackend(payload) {
-    const res = await fetch(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`, {
-        method: "POST",
+    const res = await axios.post(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`, payload, {
         headers: {
             "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
     });
 
-    if (!res.ok) {
+    if (res.status !== 200) {
         throw new Error(`Backend error: ${res.status}`);
     }
-    const text = await res.text();
-    console.log(text);
-    return res.json();
+    console.log(res.data);
+    return res.data;
 }
 
 /* ================= MAIN LOOP ================= */
