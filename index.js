@@ -36,7 +36,7 @@ async function getPrinterStatus() {
     const connect = await axios.get(`${DUET_BASE}/rr_connect?password=`);
     console.log("Connected to printer:", connect.data);
     const res = await axios.get(
-        `${DUET_BASE}/machine/rr_model?key=state.status`
+        `${DUET_BASE}/rr_model?key=state.status`
     );
     if (res.status !== 200) throw new Error("Failed to fetch printer status");
     console.log(res.data);
