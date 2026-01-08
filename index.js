@@ -1,6 +1,5 @@
 const path = require("path");
 const fs = require("fs");
-const fetch = require("node-fetch");
 const { v4: uuidv4 } = require("uuid");
 require("dotenv").config();
 
