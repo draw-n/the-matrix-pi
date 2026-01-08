@@ -34,6 +34,8 @@ let state = loadState();
 async function getPrinterStatus() {
     const res = await fetch(`${DUET_BASE}/machine/rr_model?key=state.status`);
     if (!res.ok) throw new Error("Failed to fetch printer status");
+    const text = await res.text();
+    console.log(text);
     return res.json();
 }
 
@@ -51,7 +53,8 @@ async function notifyBackend(payload) {
     if (!res.ok) {
         throw new Error(`Backend error: ${res.status}`);
     }
-
+    const text = await res.text();
+    console.log(text);
     return res.json();
 }
 
