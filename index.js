@@ -68,10 +68,9 @@ async function poll() {
         const currentStatus = status.state?.status;
         const currentFile = status.job?.file?.fileName ?? null;
 
-        const wasProcessing = state.lastStatus === "processing";
         const isIdle = currentStatus === "idle";
 
-        if (wasProcessing && isIdle) {
+        if (isIdle) {
             console.log("Print completed");
 
             const response = await notifyBackend("");
