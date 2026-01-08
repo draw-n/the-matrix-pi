@@ -65,7 +65,7 @@ async function poll() {
     try {
         const status = await getPrinterStatus();
 
-        const currentStatus = status.state?.status;
+        const currentStatus = status.result;
         const currentFile = status.job?.file?.fileName ?? null;
 
         const isIdle = currentStatus === "idle";
