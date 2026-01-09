@@ -35,9 +35,7 @@ let state = loadState();
 async function getPrinterStatus() {
     const connect = await axios.get(`${DUET_BASE}/rr_connect?password=`);
     console.log("Connected to printer:", connect.data);
-    const res = await axios.get(
-        `${DUET_BASE}/rr_model?key=state.status`
-    );
+    const res = await axios.get(`${DUET_BASE}/rr_model?key=state.status`);
     if (res.status !== 200) throw new Error("Failed to fetch printer status");
     console.log(res.data);
     return res.data;
@@ -45,12 +43,8 @@ async function getPrinterStatus() {
 
 /* ================= BACKEND API ================= */
 
-async function notifyBackend(payload) {
-    const res = await axios.post(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`, payload, {
-        headers: {
-            "Content-Type": "application/json",
-        },
-    });
+async function notifyBackend() {
+    const res = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`);
 
     if (res.status !== 200) {
         throw new Error(`Backend error: ${res.status}`);
@@ -73,7 +67,7 @@ async function poll() {
         if (isIdle) {
             console.log("Print completed");
 
-            const response = await notifyBackend("");
+            const response = await notifyBackend();
         }
 
         state.lastStatus = currentStatus;
