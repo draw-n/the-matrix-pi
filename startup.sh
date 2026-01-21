@@ -42,9 +42,9 @@ fi
 # Start Node app with PM2
 cd ".."
 
-if pm2 list | grep -q "main-app"; then
+if pm2 list | grep -q "matrix-queue"; then
   log "Restarting PM2 app..."
-  pm2 restart main-app
+  pm2 restart matrix-queue
 else
   log "Starting PM2 app..."
   pm2 start npm --name "matrix-queue" -- start

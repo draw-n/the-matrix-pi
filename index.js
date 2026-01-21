@@ -111,14 +111,16 @@ async function poll() {
 
         // If idle and state is 1, notify backend and set to 2
         if (state.state === 1) {
+            // Set state to 2 before calling notifyBackend to prevent duplicate sends
+            state.state = 2;
+            saveState(state);
             try {
                 const readyRes = await notifyBackend();
                 console.log("Notified backend ready:", readyRes);
-                // Only set state to 2 if notifyBackend succeeds
-                state.state = 2;
-                saveState(state);
             } catch (err) {
-                // If 404 or other error, do not change state
+                // If 404 or other error, revert state to 1
+                state.state = 1;
+                saveState(state);
                 console.error("Error notifying backend ready:", err.message);
             }
         }
