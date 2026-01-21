@@ -75,7 +75,7 @@ async function poll() {
         const messageIsNull = messageBox.result == null;
 
         // State machine:
-        // 0: busy, 1: idle & available, 2: job sent, waiting for messageBox to clear
+        // 0: busy, 1: idle & available, 2: waiting for backend, 3: job sent, waiting for messageBox to clear
         if (!isIdle) {
             // Printer busy
             if (state.state !== 0) {
@@ -86,7 +86,7 @@ async function poll() {
         }
 
         // Printer is idle
-        if (state.state === 2) {
+        if (state.state === 3) {
             // Waiting for messageBox to clear
             if (messageIsNull) {
                 // messageBox is null, send next job
@@ -103,20 +103,22 @@ async function poll() {
             return;
         }
 
-        // If idle and not in state 2, set to 1
-        if (state.state !== 1) {
+        // If idle and not in state 1, set to 1
+        if (state.state !== 1 && state.state !== 2) {
             state.state = 1;
             saveState(state);
         }
 
-        // If idle and state is 1, notify backend and set to 2
+        // If idle and state is 1, start backend request and set to 2 (waiting for backend)
         if (state.state === 1) {
-            // Set state to 2 before calling notifyBackend to prevent duplicate sends
             state.state = 2;
             saveState(state);
             try {
                 const readyRes = await notifyBackend();
                 console.log("Notified backend ready:", readyRes);
+                // Only set to 3 if backend responds with a job (200)
+                state.state = 3;
+                saveState(state);
             } catch (err) {
                 // If 404 or other error, revert state to 1
                 state.state = 1;
@@ -124,6 +126,7 @@ async function poll() {
                 console.error("Error notifying backend ready:", err.message);
             }
         }
+        // If state is 2, do nothing (waiting for backend response to finish)
     } catch (err) {
         console.error("Poll error:", err.message);
     }
