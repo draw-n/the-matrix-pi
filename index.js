@@ -28,7 +28,9 @@ function saveState(state) {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
 }
 
+
 let state = loadState();
+let pollLock = false;
 
 /* ================= DUET API ================= */
 
@@ -66,6 +68,11 @@ async function notifyBackend() {
 
 
 async function poll() {
+    if (pollLock) {
+        console.log("Poll skipped: previous poll still running.");
+        return;
+    }
+    pollLock = true;
     try {
         const status = await getPrinterStatus();
         const messageBox = await getMessageStatus();
@@ -82,6 +89,7 @@ async function poll() {
                 state.state = 0;
                 saveState(state);
             }
+            pollLock = false;
             return;
         }
 
@@ -100,6 +108,7 @@ async function poll() {
                 state.state = 0;
                 saveState(state);
             }
+            pollLock = false;
             return;
         }
 
@@ -129,6 +138,8 @@ async function poll() {
         // If state is 2, do nothing (waiting for backend response to finish)
     } catch (err) {
         console.error("Poll error:", err.message);
+    } finally {
+        pollLock = false;
     }
 }
 
