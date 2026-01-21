@@ -41,6 +41,15 @@ async function getPrinterStatus() {
     return res.data;
 }
 
+async function getMessageStatus() {
+    const connect = await axios.get(`${DUET_BASE}/rr_connect?password=`);
+    console.log("Connected to printer:", connect.data);
+    const res = await axios.get(`${DUET_BASE}/rr_model?key=state.messageBox`);
+    if (res.status !== 200) throw new Error("Failed to fetch message status");
+    console.log(res.data);
+    return res.data;
+}
+
 /* ================= BACKEND API ================= */
 
 async function notifyBackend() {
@@ -55,23 +64,64 @@ async function notifyBackend() {
 
 /* ================= MAIN LOOP ================= */
 
+
 async function poll() {
     try {
         const status = await getPrinterStatus();
+        const messageBox = await getMessageStatus();
 
         const currentStatus = status.result;
-        const currentFile = status.job?.file?.fileName ?? null;
-
         const isIdle = currentStatus === "idle";
+        const messageIsNull = messageBox.result == null;
 
-        if (isIdle) {
-            console.log("Print completed");
-
-            const response = await notifyBackend();
+        // State machine:
+        // 0: busy, 1: idle & available, 2: job sent, waiting for messageBox to clear
+        if (!isIdle) {
+            // Printer busy
+            if (state.state !== 0) {
+                state.state = 0;
+                saveState(state);
+            }
+            return;
         }
 
-        state.lastStatus = currentStatus;
-        saveState(state);
+        // Printer is idle
+        if (state.state === 2) {
+            // Waiting for messageBox to clear
+            if (messageIsNull) {
+                // messageBox is null, send next job
+                try {
+                    const sendRes = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/send`);
+                    if (sendRes.status !== 200) throw new Error(`Backend send error: ${sendRes.status}`);
+                    console.log("Sent next job:", sendRes.data);
+                } catch (err) {
+                    console.error("Error sending job:", err.message);
+                }
+                state.state = 0;
+                saveState(state);
+            }
+            return;
+        }
+
+        // If idle and not in state 2, set to 1
+        if (state.state !== 1) {
+            state.state = 1;
+            saveState(state);
+        }
+
+        // If idle and state is 1, notify backend and set to 2
+        if (state.state === 1) {
+            try {
+                const readyRes = await notifyBackend();
+                console.log("Notified backend ready:", readyRes);
+                // Only set state to 2 if notifyBackend succeeds
+                state.state = 2;
+                saveState(state);
+            } catch (err) {
+                // If 404 or other error, do not change state
+                console.error("Error notifying backend ready:", err.message);
+            }
+        }
     } catch (err) {
         console.error("Poll error:", err.message);
     }
