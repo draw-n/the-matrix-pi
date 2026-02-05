@@ -41,6 +41,8 @@ if [ -d "$CAMERA_DIR" ]; then
   docker compose up -d
 fi
 
+cd "$TARGET_DIR"
+
 # 5. Reload the App (PM2)
 # Using the full path ensures it never fails
 PM2_PATH=$(which pm2)
