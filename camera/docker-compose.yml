@@ -1,8 +1,14 @@
 services:
-  usbcam:
-    build: .
-    ports:
-      - "100:100"
+  camera:
+    image: uael/ustreamer
+    container_name: matrix-camera
+    restart: always
     devices:
       - "/dev/video0:/dev/video0"
-    restart: unless-stopped
+    ports:
+      - "100:8080" # Maps Pi port 100 to ustreamer's 8080
+    environment:
+      - USTREAMER_DEVICE=/dev/video0
+      - USTREAMER_RESOLUTION=640x360
+      - USTREAMER_FRAMERATE=30
+      - USTREAMER_DESIRED_FPS=30
