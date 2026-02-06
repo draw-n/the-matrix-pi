@@ -12,3 +12,8 @@ services:
       - USTREAMER_RESOLUTION=640x360
       - USTREAMER_FRAMERATE=30
       - USTREAMER_DESIRED_FPS=30
+    command: [
+      "--host=0.0.0.0",
+      "--port=8080",
+      "--allow-origin=*"
+    ]
