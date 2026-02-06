@@ -1,12 +1,12 @@
 services:
   camera:
-    image: uael/ustreamer
+    image: mkuf/ustreamer:latest
     container_name: matrix-camera
     restart: always
     devices:
       - "/dev/video0:/dev/video0"
     ports:
-      - "100:8080" # Maps Pi port 100 to ustreamer's 8080
+      - "80:8080" # Maps Pi port 100 to ustreamer's 8080
     environment:
       - USTREAMER_DEVICE=/dev/video0
       - USTREAMER_RESOLUTION=640x360
