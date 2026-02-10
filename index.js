@@ -79,12 +79,18 @@ async function poll() {
 
         // 1. HANDLE PRINTER BUSY
         if (!isIdle) {
-            // ONLY sync to State 0 if we aren't currently waiting for a message (3)
-            // OR currently waiting for a backend response (2).
-            const isTransitioning = (state.state === 2 || state.state === 3);
+            // NEW LOGIC: If there is an ACTIVE message box, DO NOT sync to State 0.
+            // This means we are likely in the middle of a /ready transition.
+            if (!messageIsNull) {
+                console.log("⏳ Printer is busy but Message Box is active. Waiting for state transition...");
+                return; 
+            }
 
+            // Only sync to State 0 if we aren't transitioning (2) or interacting (3)
+            const isTransitioning = (state.state === 2 || state.state === 3);
+            
             if (!isTransitioning && state.state !== 0) {
-                console.log("🔄 Printer is active (and not in transition). Syncing state to 0.");
+                console.log("🔄 Printer is busy (Manual Print detected). Syncing state to 0.");
                 state.state = 0;
                 saveState(state);
             }
