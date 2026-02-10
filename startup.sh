@@ -7,6 +7,8 @@ export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
 TARGET_DIR="/home/matrix/the-matrix-pi"
 CAMERA_DIR="$TARGET_DIR/camera"
 
+rm -f $TARGET_DIR/printer-state.json
+
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
