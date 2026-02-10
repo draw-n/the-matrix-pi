@@ -4,30 +4,12 @@ set -e
 # Ensure we can find node, npm, and pm2
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
 
-REPO_URL="https://github.com/draw-n/the-matrix-pi"
 TARGET_DIR="/home/matrix/the-matrix-pi"
 CAMERA_DIR="$TARGET_DIR/camera"
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
 }
-
-# 1. Wait for network
-until ping -c1 google.com >/dev/null 2>&1; do
-  log "Waiting for network..."
-  sleep 5
-done
-
-# 2. Update code
-if [ ! -d "$TARGET_DIR/.git" ]; then
-  log "Cloning..."
-  git clone "$REPO_URL" "$TARGET_DIR"
-  cd "$TARGET_DIR"
-else
-  log "Updating..."
-  cd "$TARGET_DIR"
-  git pull
-fi
 
 # 3. Dependencies
 log "Updating npm packages..."

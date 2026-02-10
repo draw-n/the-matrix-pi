@@ -32,21 +32,19 @@ function saveState(s) {
 let state = loadState();
 let pollLock = false;
 
-// Shared Axios instance for efficiency
 const duet = axios.create({ baseURL: DUET_BASE, timeout: 4000 });
 
 /* ================= HELPERS ================= */
 
 async function getPrinterData() {
     try {
-        // Fetching status and messageBox in parallel to ensure consistency
         const [statusRes, msgRes] = await Promise.all([
             duet.get("/rr_model?key=state.status"),
             duet.get("/rr_model?key=state.messageBox")
         ]);
         return {
-            status: statusRes.data.result, // e.g. "idle", "busy", "processing"
-            messageBox: msgRes.data.result // null or object { title, message, ... }
+            status: statusRes.data.result, 
+            messageBox: msgRes.data.result 
         };
     } catch (err) {
         console.error(`❌ Duet Offline (${PRINTER_IP}):`, err.message);
@@ -57,34 +55,33 @@ async function getPrinterData() {
 /* ================= MAIN POLL LOOP ================= */
 
 async function poll() {
-    if (pollLock) return; // Skip if a network request is still hanging
+    if (pollLock) return; 
     pollLock = true;
 
     try {
         const data = await getPrinterData();
-        if (!data) return; // Exit if printer is unreachable
+        if (!data) return; 
 
         const { status, messageBox } = data;
         const isIdle = status === "idle";
         const messageIsNull = messageBox == null;
 
-        console.log(`[${new Date().toLocaleTimeString()}] State: ${state.state} | Printer: ${status} | Msg: ${messageIsNull ? 'Empty' : 'ACTIVE'}`);
+        console.log(`[${new Date().toLocaleTimeString()}] Internal: ${state.state} | Printer: ${status} | Msg: ${messageIsNull ? 'Empty' : 'ACTIVE'}`);
 
-        /* STATE DEFINITIONS:
-           0: Busy/Printing
-           1: Idle/Ready to check backend
-           2: Pending (Backend request in progress)
-           3: Interaction (Waiting for user to click "OK" on printer screen)
+        /* PI STATE LOGIC MAPPED TO MONGODB STATUS:
+           0: Busy/Printing (DB: printing)
+           1: Idle/Scanning (DB: looking for "queued" or "printing" to close)
+           2: Pending (Atomic Lock - Backend request in progress)
+           3: Interaction (DB: ready - waiting for user M291 click)
         */
 
         // 1. HANDLE PRINTER BUSY
         if (!isIdle) {
-            // Check: Are we actually busy, or just processing the "M291" message?
-            // If we are in state 3 and a message is visible, ignore the "busy" status.
+            // Ignore "busy" status if we are simply waiting for a user to click the message box
             const processingMessage = (state.state === 3 && !messageIsNull);
 
             if (!processingMessage && state.state !== 0) {
-                console.log("🔄 Printer started a job or is busy. Syncing state to 0.");
+                console.log("🔄 Printer is active. Syncing state to 0 (Printing).");
                 state.state = 0;
                 saveState(state);
             }
@@ -93,56 +90,65 @@ async function poll() {
 
         // 2. PRINTER IS IDLE - LOGIC ENGINE
         
-        // From Busy -> Ready
+        // From Busy -> Scanning (Triggered when print finishes)
         if (state.state === 0) {
+            console.log("🏁 Printer reached idle. Moving to Scan state.");
             state.state = 1;
             saveState(state);
         }
 
-        // State 1: Ready to ask backend for work
+        // State 1: Ready to call /jobs/ready
         if (state.state === 1) {
-            console.log("🔍 Checking backend for new jobs...");
+            console.log("🔍 Checking backend (Finalizing previous / Finding next)...");
             
-            // LOCK: Move to state 2 BEFORE the await so concurrent polls skip this block
+            // LOCK: Move to state 2 BEFORE the await
             state.state = 2;
             saveState(state);
 
             try {
+                // Backend: Sets "printing" -> "completed" AND "queued" -> "ready"
                 const res = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`);
                 
-                // Assuming backend returns 200 and some data if a message was sent
-                if (res.status === 200 && res.data) {
-                    console.log("✅ Backend triggered Message Box.");
+                if (res.status === 200 && res.data.jobFound) {
+                    console.log("✅ Job found and set to 'ready'. Interaction required.");
                     state.state = 3;
                 } else {
-                    state.state = 1; // Revert to ready to try again next poll
+                    console.log("💤 No new jobs. Staying in Scan state.");
+                    state.state = 1; 
                 }
             } catch (err) {
-                console.error("⚠️ Backend request failed:", err.message);
-                state.state = 1; // Revert on error
+                console.error("⚠️ Backend scan failed:", err.message);
+                state.state = 1; // Revert to retry
             }
             saveState(state);
             return;
         }
 
-        // State 3: Waiting for the human in the lab
+        // State 3: Interaction (Waiting for user)
         if (state.state === 3) {
             if (messageIsNull) {
-                console.log("🔘 Message cleared by user! Sending print file...");
+                console.log("🔘 Message cleared! Moving from 'ready' to 'printing'...");
+                
+                // Set to Pending again to lock the /send request
+                state.state = 2;
+                saveState(state);
+
                 try {
+                    // Backend: Sets "ready" -> "printing" and uploads file
                     const sendRes = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/send`);
                     if (sendRes.status === 200) {
-                        console.log("🚀 Job successfully sent to printer.");
-                        state.state = 0; // Set to busy
+                        console.log("🚀 G-code sent. Job status: printing.");
+                        state.state = 0; 
+                    } else {
+                        state.state = 1; 
                     }
                 } catch (err) {
-                    console.error("❌ Failed to send job:", err.message);
-                    state.state = 1; // Something went wrong, go back to ready
+                    console.error("❌ Send error:", err.message);
+                    state.state = 1; 
                 }
                 saveState(state);
             } else {
-                // Do nothing, just wait for the box to become null
-                console.log("⏳ Waiting for user to clear bed and click 'OK'...");
+                console.log("⏳ User interaction required at printer.");
             }
         }
 
