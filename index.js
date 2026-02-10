@@ -40,11 +40,11 @@ async function getPrinterData() {
     try {
         const [statusRes, msgRes] = await Promise.all([
             duet.get("/rr_model?key=state.status"),
-            duet.get("/rr_model?key=state.messageBox")
+            duet.get("/rr_model?key=state.messageBox"),
         ]);
         return {
-            status: statusRes.data.result, 
-            messageBox: msgRes.data.result 
+            status: statusRes.data.result,
+            messageBox: msgRes.data.result,
         };
     } catch (err) {
         console.error(`❌ Duet Offline (${PRINTER_IP}):`, err.message);
@@ -55,18 +55,20 @@ async function getPrinterData() {
 /* ================= MAIN POLL LOOP ================= */
 
 async function poll() {
-    if (pollLock) return; 
+    if (pollLock) return;
     pollLock = true;
 
     try {
         const data = await getPrinterData();
-        if (!data) return; 
+        if (!data) return;
 
         const { status, messageBox } = data;
         const isIdle = status === "idle";
         const messageIsNull = messageBox == null;
 
-        console.log(`[${new Date().toLocaleTimeString()}] Internal: ${state.state} | Printer: ${status} | Msg: ${messageIsNull ? 'Empty' : 'ACTIVE'}`);
+        console.log(
+            `[${new Date().toLocaleTimeString()}] Internal: ${state.state} | Printer: ${status} | Msg: ${messageIsNull ? "Empty" : "ACTIVE"}`
+        );
 
         /* PI STATE LOGIC MAPPED TO MONGODB STATUS:
            0: Busy/Printing (DB: printing)
@@ -77,8 +79,8 @@ async function poll() {
 
         // 1. HANDLE PRINTER BUSY
         if (!isIdle) {
-            // Ignore "busy" status if we are simply waiting for a user to click the message box
-            const processingMessage = (state.state === 3 && !messageIsNull);
+            // Ignore "busy" status if we are in the middle of showing the user a message
+            const processingMessage = state.state === 3 && !messageIsNull;
 
             if (!processingMessage && state.state !== 0) {
                 console.log("🔄 Printer is active. Syncing state to 0 (Printing).");
@@ -89,8 +91,8 @@ async function poll() {
         }
 
         // 2. PRINTER IS IDLE - LOGIC ENGINE
-        
-        // From Busy -> Scanning (Triggered when print finishes)
+
+        // Transition: Busy -> Scanning (Job finished or Pi just woke up)
         if (state.state === 0) {
             console.log("🏁 Printer reached idle. Moving to Scan state.");
             state.state = 1;
@@ -100,56 +102,59 @@ async function poll() {
         // State 1: Ready to call /jobs/ready
         if (state.state === 1) {
             console.log("🔍 Checking backend (Finalizing previous / Finding next)...");
-            
-            // LOCK: Move to state 2 BEFORE the await
-            state.state = 2;
+
+            state.state = 2; // LOCK: Enter Pending
             saveState(state);
 
             try {
-                // Backend: Sets "printing" -> "completed" AND "queued" -> "ready"
                 const res = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`);
-                
+
+                // If backend finds a job that is 'queued' (and flips it) OR already 'ready'
                 if (res.status === 200 && res.data.jobFound) {
-                    console.log("✅ Job found and set to 'ready'. Interaction required.");
-                    state.state = 3;
+                    console.log(`✅ Job found (Status: ${res.data.status}). Moving to Interaction.`);
+                    state.state = 3; 
                 } else {
-                    console.log("💤 No new jobs. Staying in Scan state.");
-                    state.state = 1; 
+                    console.log("💤 No jobs found. Staying in Scan state.");
+                    state.state = 1;
                 }
             } catch (err) {
                 console.error("⚠️ Backend scan failed:", err.message);
-                state.state = 1; // Revert to retry
+                state.state = 1; // Unlock to allow retry
             }
             saveState(state);
             return;
         }
 
-        // State 3: Interaction (Waiting for user)
+        // State 3: Interaction (User must clear bed and click 'OK')
         if (state.state === 3) {
             if (messageIsNull) {
-                console.log("🔘 Message cleared! Moving from 'ready' to 'printing'...");
+                console.log("🔘 Message cleared by user! LOCKING and triggering G-code upload...");
                 
-                // Set to Pending again to lock the /send request
-                state.state = 2;
+                // LOCK: Move back to Pending (State 2) so no other poll cycle triggers /send
+                state.state = 2; 
                 saveState(state);
 
                 try {
-                    // Backend: Sets "ready" -> "printing" and uploads file
                     const sendRes = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/send`);
+                    
                     if (sendRes.status === 200) {
-                        console.log("🚀 G-code sent. Job status: printing.");
-                        state.state = 0; 
+                        console.log("🚀 Job successfully sent! Duet should be busy soon.");
+                        state.state = 0; // Success -> Busy
                     } else {
-                        state.state = 1; 
+                        console.warn("⚠️ Backend didn't start print. Re-checking status...");
+                        state.state = 1; // Unexpected response, revert to scan
                     }
                 } catch (err) {
-                    console.error("❌ Send error:", err.message);
-                    state.state = 1; 
+                    console.error("❌ Failed to send job:", err.message);
+                    // CRITICAL: Stay in State 3. If it was a network timeout, 
+                    // we want to try /send again next poll, not restart the scan.
+                    state.state = 3; 
                 }
                 saveState(state);
             } else {
-                console.log("⏳ User interaction required at printer.");
+                console.log("⏳ Waiting for user to clear bed and click 'OK'...");
             }
+            return; 
         }
 
     } catch (globalErr) {
