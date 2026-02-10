@@ -79,11 +79,12 @@ async function poll() {
 
         // 1. HANDLE PRINTER BUSY
         if (!isIdle) {
-            // Ignore "busy" status if we are in the middle of showing the user a message
-            const processingMessage = state.state === 3 && !messageIsNull;
+            // ONLY sync to State 0 if we aren't currently waiting for a message (3)
+            // OR currently waiting for a backend response (2).
+            const isTransitioning = (state.state === 2 || state.state === 3);
 
-            if (!processingMessage && state.state !== 0) {
-                console.log("🔄 Printer is active. Syncing state to 0 (Printing).");
+            if (!isTransitioning && state.state !== 0) {
+                console.log("🔄 Printer is active (and not in transition). Syncing state to 0.");
                 state.state = 0;
                 saveState(state);
             }
