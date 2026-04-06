@@ -5,22 +5,27 @@ import RPi.GPIO as GPIO
 import requests
 import smtplib
 from email.mime.text import MIMEText
+import configparser
 import time
 
 # --- Configuration ---
+config = configparser.ConfigParser()
+config.read("/home/matrix/the-matrix-pi/help-button/config.ini")
+
 BUTTON_PIN = 17
-DUET_IP = "10.68.1.176"
-BASE_URL = f"http://{DUET_IP}"
-DUET_PASSWORD = "MATRIX"
 DEBOUNCE_MS = 300
 HALT_MESSAGE = "Print halted by stop button"
 
+DUET_IP       = config["duet"]["ip"]
+DUET_PASSWORD = config["duet"]["password"]
+BASE_URL      = f"http://{DUET_IP}"
+
+EMAIL_SENDER    = config["email"]["sender"]
+EMAIL_PASSWORD  = config["email"]["app_password"]
+EMAIL_RECIPIENT = config["email"]["recipient"]
 # --- Email config ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-EMAIL_SENDER = "lyloe2011@gmail.com" #change gmail later 
-EMAIL_PASSWORD = "rgpb odfn ufvb axzq"   # Gmail app password, not your real password
-EMAIL_RECIPIENT = "ly.v.tran@vanderbilt.edu" #change later
 
 # -------------------------------------------------------
 
