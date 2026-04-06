@@ -15,9 +15,6 @@ HALT_MESSAGE = "Print halted by stop button"
 # --- Email config ---
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
-EMAIL_SENDER = "lyloe2011@gmail.com"
-EMAIL_PASSWORD = "Lyloe20112007"   
-EMAIL_RECIPIENT = "ly.v.tran@vanderbilt.edu"
 
 try:
     msg = MIMEText("message testttt")
