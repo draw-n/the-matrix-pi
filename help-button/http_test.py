@@ -1,6 +1,6 @@
 import requests
 
-DUET_IP = "10.1.68.193"  # your Duet's IP
+DUET_IP = "10.68.1.193"  # your Duet's IP
 BASE_URL = f"http://{DUET_IP}"
 
 r = requests.get(f"{BASE_URL}/rr_connect", params={"password": "MATRIX"}, timeout=5)
