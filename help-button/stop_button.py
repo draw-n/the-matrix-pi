@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # emergency_stop_http.py
-# Wiring: Button between GPIO 17 (Pin 11) and GND (Pin 6)
 
 import RPi.GPIO as GPIO
 import requests
@@ -8,31 +7,50 @@ import time
 
 # --- Configuration ---
 BUTTON_PIN = 17
-DUET_IP = "192.168.1.100"    # Change to your Duet's IP address
+DUET_IP = "10.68.1.193"    # Change to your Duet's IP
 BASE_URL = f"http://{DUET_IP}"
+DUET_PASSWORD = "MATRX"           # Set if you have a password on Duet Web Control
 DEBOUNCE_MS = 300
+HALT_MESSAGE = "Print halted by stop button"
+
+def connect_to_duet():
+    try:
+        r = requests.get(
+            f"{BASE_URL}/rr_connect",
+            params={"password": DUET_PASSWORD},
+            timeout=5
+        )
+        data = r.json()
+        if data.get("err") == 0:
+            print("Connected to Duet")
+            return True
+        else:
+            print(f"Duet rejected connection: {data}")
+            return False
+    except Exception as e:
+        print(f"Connect failed: {e}")
+        return False
 
 def send_gcode(command):
-    """Send G-code to Duet via HTTP."""
     try:
-        url = f"{BASE_URL}/rr_gcode"
-        response = requests.get(url, params={"gcode": command}, timeout=5)
-        print(f"Sent: {command} → Status: {response.status_code}")
-        return True
-    except requests.exceptions.ConnectionError:
-        print(f"Connection failed — is Duet at {DUET_IP}?")
-        return False
-    except requests.exceptions.Timeout:
-        print("Request timed out — Duet not responding")
-        return False
+        r = requests.get(
+            f"{BASE_URL}/rr_gcode",
+            params={"gcode": command},
+            timeout=5
+        )
+        print(f"Sent: {command} → {r.status_code}")
+    except Exception as e:
+        print(f"Failed to send {command}: {e}")
 
 def button_pressed(channel):
     print("Button pressed! Halting printer...")
-
-    send_gcode("M81")
-    time.sleep(0.3)
-
-    print("Done.")
+    if connect_to_duet():
+        send_gcode("M25")
+        time.sleep(0.3)
+        send_gcode(f'M291 P"{HALT_MESSAGE}" R"Stopped" S0')
+        print("Done.")
+    else:
+        print("Could not reach Duet — is it on the network?")
 
 def main():
     GPIO.setmode(GPIO.BCM)
@@ -44,7 +62,7 @@ def main():
         bouncetime=DEBOUNCE_MS
     )
 
-    print(f"Emergency stop ready (HTTP mode) → {BASE_URL}")
+    print(f"Emergency stop ready → {BASE_URL}")
     print("Press Ctrl+C to exit.\n")
 
     try:

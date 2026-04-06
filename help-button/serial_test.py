@@ -4,13 +4,13 @@ import requests
 DUET_IP = "10.68.1.193"   # your Duet's IP
 BASE_URL = f"http://{DUET_IP}"
 
-def send_gcode(command):
-    url = f"{BASE_URL}/rr_gcode"
-    r = requests.get(url, params={"gcode": command}, timeout=5)
-    print(f"Sent: {command} → {r.status_code}")
+r = requests.get(f"{BASE_URL}/rr_connect", params={"password": ""}, timeout=5)
+print(f"Connect: {r.json()}")  # should show {{"err": 0}}
 
-# Test 1 — ping Duet, get firmware info
-send_gcode("M115")
+# Step 2 — send G-code
+r = requests.get(f"{BASE_URL}/rr_gcode", params={"gcode": "M115"}, timeout=5)
+print(f"M115: {r.status_code}")
 
-# Test 2 — show popup on screen
-send_gcode('M291 P"HTTP test OK" R"Pi Connected" S0')
+# Step 3 — show popup on screen
+r = requests.get(f"{BASE_URL}/rr_gcode", params={"gcode": 'M291 P"HTTP test OK" R"Pi Connected" S0'}, timeout=5)
+print(f"M291: {r.status_code}")
