@@ -81,7 +81,7 @@ def post_announcement():
         "status":      "posted",
     }
     r = requests.post(
-        ANNOUNCEMENT_POST_URL,          # POST to /announcements/internal
+        ANNOUNCEMENT_URL,          # POST to /announcements/internal
         json=payload,
         headers={"x-internal-key": INTERNAL_KEY},
         timeout=5
@@ -96,7 +96,7 @@ def post_announcement():
 
 def delete_announcement(uuid):
     r = requests.delete(
-        f"{ANNOUNCEMENT_BASE_URL}/{uuid}",   # DELETE to /announcements/:uuid
+        f"{ANNOUNCEMENT_URL}/{uuid}",   # DELETE to /announcements/:uuid
         headers={"x-internal-key": INTERNAL_KEY},
         timeout=5
     )
