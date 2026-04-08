@@ -120,51 +120,51 @@ def main():
         return
 
     # 3. Show M291 confirmation dialog on Duet screen
-send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
-print("\nWaiting for operator to press OK or Cancel on Duet screen...")
+    send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
+    print("\nWaiting for operator to press OK or Cancel on Duet screen...")
 
-# Wait for dialog to appear first
-time.sleep(1)
+    # Wait for dialog to appear first
+    time.sleep(1)
 
-# 4. Poll rr_model for message box dismissal
-while True:
-    time.sleep(POLL_INTERVAL)
+    # 4. Poll rr_model for message box dismissal
+    while True:
+        time.sleep(POLL_INTERVAL)
 
-    if not connect_to_duet():
-        continue
+        if not connect_to_duet():
+            continue
 
-    box = get_message_box()
-    print(f"Message box: {box}")
+        box = get_message_box()
+        print(f"Message box: {box}")
 
-    if box == "error":
-        continue
+        if box == "error":
+            continue
 
-    if box is None:
-        # Dialog was dismissed — check which button via seq number
-        # M291 S1: OK dismisses and halts, Cancel dismisses without halting
-        # Since we can't distinguish, we poll state.status instead
-        status_r = requests.get(
-            f"{BASE_URL}/rr_model",
-            params={"key": "state.status"},
-            headers={"X-Session-Key": str(session_key)},
-            timeout=5
-        )
-        status = status_r.json().get("result", "")
-        print(f"Duet status after dismiss: {status}")
+        if box is None:
+            # Dialog was dismissed — check which button via seq number
+            # M291 S1: OK dismisses and halts, Cancel dismisses without halting
+            # Since we can't distinguish, we poll state.status instead
+            status_r = requests.get(
+                f"{BASE_URL}/rr_model",
+                params={"key": "state.status"},
+                headers={"X-Session-Key": str(session_key)},
+                timeout=5
+            )
+            status = status_r.json().get("result", "")
+            print(f"Duet status after dismiss: {status}")
 
-        # halted = operator pressed Cancel (still paused)
-        # idle or paused but no box = operator pressed OK
-        if status in ["idle", "paused"]:
-            print("Operator confirmed fix — deleting announcement.")
-            delete_announcement(uuid)
-            send_gcode("M292 P0")
-            send_gcode('M291 P"Announcement cleared. Resume when ready." R"Fixed" S0')
-            print("Done.")
-            break
+            # halted = operator pressed Cancel (still paused)
+            # idle or paused but no box = operator pressed OK
+            if status in ["idle", "paused"]:
+                print("Operator confirmed fix — deleting announcement.")
+                delete_announcement(uuid)
+                send_gcode("M292 P0")
+                send_gcode('M291 P"Announcement cleared. Resume when ready." R"Fixed" S0')
+                print("Done.")
+                break
 
-    else:
-        # Dialog still showing, keep waiting
-        print("Dialog still open, waiting...")
+        else:
+            # Dialog still showing, keep waiting
+            print("Dialog still open, waiting...")
 
 if __name__ == "__main__":
     main()
