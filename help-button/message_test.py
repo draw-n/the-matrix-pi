@@ -48,13 +48,20 @@ def send_gcode(command):
     )
     print(f"Sent: {command} → {r.status_code}")
 
-def get_reply():
-    r = requests.get(
-        f"{BASE_URL}/rr_reply",
-        headers={"X-Session-Key": str(session_key)},
-        timeout=5
-    )
-    return r.text.strip()
+def get_message_box():
+    """Poll rr_model for active message box. Returns None if no dialog showing."""
+    try:
+        r = requests.get(
+            f"{BASE_URL}/rr_model",
+            params={"key": "state.messageBox"},
+            headers={"X-Session-Key": str(session_key)},
+            timeout=5
+        )
+        data = r.json()
+        return data.get("result")  # None if no message box active
+    except Exception as e:
+        print(f"rr_model error: {e}")
+        return "error"
 
 # --- Announcement functions ---
 
@@ -74,7 +81,7 @@ def post_announcement():
         "status":      "posted",
     }
     r = requests.post(
-        ANNOUNCEMENT_URL,
+        ANNOUNCEMENT_POST_URL,          # POST to /announcements/internal
         json=payload,
         headers={"x-internal-key": INTERNAL_KEY},
         timeout=5
@@ -89,7 +96,7 @@ def post_announcement():
 
 def delete_announcement(uuid):
     r = requests.delete(
-        f"{ANNOUNCEMENT_URL}/{uuid}",
+        f"{ANNOUNCEMENT_BASE_URL}/{uuid}",   # DELETE to /announcements/:uuid
         headers={"x-internal-key": INTERNAL_KEY},
         timeout=5
     )
@@ -113,35 +120,51 @@ def main():
         return
 
     # 3. Show M291 confirmation dialog on Duet screen
-    send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
-    print("\nWaiting for operator to press OK or Cancel on Duet screen...")
+send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
+print("\nWaiting for operator to press OK or Cancel on Duet screen...")
 
-    # 4. Poll rr_reply for operator response
-    while True:
-        time.sleep(POLL_INTERVAL)
+# Wait for dialog to appear first
+time.sleep(1)
 
-        if not connect_to_duet():
-            continue
+# 4. Poll rr_model for message box dismissal
+while True:
+    time.sleep(POLL_INTERVAL)
 
-        reply = get_reply()
+    if not connect_to_duet():
+        continue
 
-        if not reply:
-            continue
+    box = get_message_box()
+    print(f"Message box: {box}")
 
-        print(f"Duet reply: {reply}")
+    if box == "error":
+        continue
 
-        if "ok" in reply.lower():
+    if box is None:
+        # Dialog was dismissed — check which button via seq number
+        # M291 S1: OK dismisses and halts, Cancel dismisses without halting
+        # Since we can't distinguish, we poll state.status instead
+        status_r = requests.get(
+            f"{BASE_URL}/rr_model",
+            params={"key": "state.status"},
+            headers={"X-Session-Key": str(session_key)},
+            timeout=5
+        )
+        status = status_r.json().get("result", "")
+        print(f"Duet status after dismiss: {status}")
+
+        # halted = operator pressed Cancel (still paused)
+        # idle or paused but no box = operator pressed OK
+        if status in ["idle", "paused"]:
             print("Operator confirmed fix — deleting announcement.")
             delete_announcement(uuid)
+            send_gcode("M292 P0")
             send_gcode('M291 P"Announcement cleared. Resume when ready." R"Fixed" S0')
             print("Done.")
             break
 
-        elif "cancel" in reply.lower():
-            print("Operator pressed Cancel — re-showing dialog in 30s.")
-            time.sleep(30)
-            send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
-            print("Waiting for operator response...")
+    else:
+        # Dialog still showing, keep waiting
+        print("Dialog still open, waiting...")
 
 if __name__ == "__main__":
     main()
