@@ -1,4 +1,4 @@
-const path = require("path");
+const path = require("axios");
 const fs = require("fs");
 const axios = require("axios");
 require("dotenv").config();
@@ -6,46 +6,47 @@ require("dotenv").config();
 const {
     PRINTER_IP,
     BACKEND_URL,
-    POLL_INTERVAL_MS = 5000,
+    POLL_INTERVAL_MS = 3000, // Faster polling helps UI responsiveness
     STATE_FILE = "./printer-state.json",
 } = process.env;
 
 const DUET_BASE = `http://${PRINTER_IP}`;
 
-function loadState() {
-    if (!fs.existsSync(STATE_FILE)) return { state: 0 };
+const loadState = () => {
+    if (!fs.existsSync(STATE_FILE)) return { state: 0 }; // 0: Busy, 1: Idle/Interacting
     try {
         return JSON.parse(fs.readFileSync(STATE_FILE, "utf8"));
     } catch (e) {
         return { state: 0 };
     }
-}
+};
 
-function saveState(s) {
-    fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
-}
+const saveState = (s) => fs.writeFileSync(STATE_FILE, JSON.stringify(s, null, 2));
 
 let state = loadState();
 let pollLock = false;
-const duet = axios.create({ baseURL: DUET_BASE, timeout: 4000 });
+const duet = axios.create({ baseURL: DUET_BASE, timeout: 3000 });
 
-async function getPrinterData() {
+const getPrinterData = async () => {
     try {
-        const [statusRes, msgRes] = await Promise.all([
+        // We now fetch the sync variable along with status
+        const [statusRes, msgRes, syncRes] = await Promise.all([
             duet.get("/rr_model?key=state.status"),
             duet.get("/rr_model?key=state.messageBox"),
+            duet.get("/rr_model?key=global.ui_sync") 
         ]);
         return {
             status: statusRes.data.result,
             messageBox: msgRes.data.result,
+            uiSyncValue: syncRes.data.result || 0,
         };
     } catch (err) {
         console.error(`❌ Duet Offline (${PRINTER_IP}):`, err.message);
         return null;
     }
-}
+};
 
-async function poll() {
+const poll = async () => {
     if (pollLock) return;
     pollLock = true;
 
@@ -53,83 +54,39 @@ async function poll() {
         const data = await getPrinterData();
         if (!data) return;
 
-        const { status, messageBox } = data;
+        const { status, messageBox, uiSyncValue } = data;
         const isIdle = status === "idle";
-        const messageIsNull = messageBox == null;
+        
+        console.log(
+            `[${new Date().toLocaleTimeString()}] Status: ${status} | Sync: ${uiSyncValue} | Msg: ${messageBox ? "ACTIVE" : "None"}`
+        );
 
-        console.log(`[${new Date().toLocaleTimeString()}] Internal: ${state.state} | Printer: ${status} | Msg: ${messageIsNull ? "Empty" : "ACTIVE"}`);
-
-        // 1. SMART BUSY CHECK (The Safeguard)
+        // 1. IF BUSY: Just monitor
         if (!isIdle) {
-            // CRITICAL: If a message box is visible, the printer is technically "busy" 
-            // processing the UI. Do NOT treat this as a manual print.
-            if (!messageIsNull) {
-                console.log("⏳ Message Box active. Holding state...");
-                return; 
-            }
-
-            // Sync to State 0 only if we aren't in a transition state (2 or 3)
-            const isTransitioning = (state.state === 2 || state.state === 3);
-            if (!isTransitioning && state.state !== 0) {
-                console.log("🔄 Printer is busy. Syncing state to 0 (Printing).");
+            if (state.state !== 0) {
                 state.state = 0;
                 saveState(state);
             }
             return;
         }
 
-        // 2. IDLE LOGIC
-        if (state.state === 0) {
-            console.log("🏁 Printer reached idle. Moving to Scan state.");
-            state.state = 1;
-            saveState(state);
-        }
+        // 2. IF IDLE: The Backend handles the Logic Tree
+        // We call /ready and pass the current uiSyncValue.
+        // The Backend will decide if it needs to send a NEW macro or process the current SyncValue.
+        try {
+            const res = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`, {
+                params: { uiSyncValue: uiSyncValue }
+            });
 
-        // State 1: Discovery
-        if (state.state === 1) {
-            console.log("🔍 Checking backend...");
-            state.state = 2; // Lock
-            saveState(state);
-
-            try {
-                const res = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/ready`);
-                if (res.status === 200 && res.data.jobFound) {
-                    console.log(`✅ Job ${res.data.status}. Moving to Interaction.`);
-                    state.state = 3; 
-                } else {
-                    console.log("💤 No jobs found.");
-                    state.state = 1; 
+            if (res.data.jobFound) {
+                // If a job is active or interaction is happening, we stay in state 1 (Idle/Interactive)
+                if (state.state !== 1) {
+                    state.state = 1;
+                    saveState(state);
                 }
-            } catch (err) {
-                console.error("⚠️ Backend scan failed:", err.message);
-                state.state = 1; 
             }
-            saveState(state);
-            return;
-        }
-
-        // State 3: User Interaction
-        if (state.state === 3) {
-            if (messageIsNull) {
-                console.log("🔘 Button clicked! Locking and Sending G-code...");
-                state.state = 2; // Lock
-                saveState(state);
-
-                try {
-                    const sendRes = await axios.get(`${BACKEND_URL}/jobs/${PRINTER_IP}/send`);
-                    if (sendRes.status === 200) {
-                        console.log("🚀 Print started.");
-                        state.state = 0; 
-                    } else {
-                        state.state = 3; // Retry on next poll
-                    }
-                } catch (err) {
-                    console.error("❌ Send error:", err.message);
-                    state.state = 3; // Keep waiting in Interaction
-                }
-                saveState(state);
-            }
-            return;
+        } catch (err) {
+            console.error("⚠️ Backend Communication Error:", err.message);
         }
 
     } catch (globalErr) {
@@ -137,6 +94,6 @@ async function poll() {
     } finally {
         pollLock = false;
     }
-}
+};
 
 setInterval(poll, Number(POLL_INTERVAL_MS));
