@@ -1,35 +1,37 @@
 #!/usr/bin/env python3
-# emergency_stop_http.py — RRF2 + email notification
+# emergency_stop_http.py
 
 import RPi.GPIO as GPIO
 import requests
-import smtplib
-from email.mime.text import MIMEText
 import configparser
 import time
+import threading
+from datetime import datetime, timezone
 
-# --- Configuration ---
+# --- Load config ---
 config = configparser.ConfigParser()
 config.read("/home/matrix/the-matrix-pi/help-button/config.ini")
 
-BUTTON_PIN = 17
-DEBOUNCE_MS = 300
-HALT_MESSAGE = "Print halted by stop button"
+BUTTON_PIN      = 17
+DEBOUNCE_MS     = 300
+HALT_MESSAGE    = "Issue fixed? Press OK to clear announcement."
+POLL_INTERVAL   = 2  # seconds between reply polls (keep low to catch response fast)
 
-DUET_IP       = config["duet"]["ip"]
-DUET_PASSWORD = config["duet"]["password"]
-BASE_URL      = f"http://{DUET_IP}"
+DUET_IP         = config["duet"]["ip"]
+DUET_PASSWORD   = config["duet"]["password"]
+BASE_URL        = f"http://{DUET_IP}"
 
-EMAIL_SENDER    = config["email"]["sender"]
-EMAIL_PASSWORD  = config["email"]["app_password"]
-EMAIL_RECIPIENT = config["email"]["recipient"]
-# --- Email config ---
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+WEBSITE_URL      = config["website"]["url"]
+CREATED_BY       = config["website"]["announcement_created_by"]
+ANNOUNCEMENT_URL = f"{WEBSITE_URL}{config['website']['announcement_path']}"
+INTERNAL_KEY     = config["website"]["internal_key"]
 
 # -------------------------------------------------------
 
-session_key = 0
+session_key         = 0
+active_announcement = None   # uuid of current halt announcement
+printer_halted      = False  # track if we triggered a halt
+poll_thread         = None   # reference to active polling thread
 
 def connect_to_duet():
     global session_key
@@ -42,11 +44,8 @@ def connect_to_duet():
         data = r.json()
         if data.get("err") == 0:
             session_key = data.get("sessionKey", 0)
-            print("Connected to Duet")
             return True
-        else:
-            print(f"Duet rejected connection: {data}")
-            return False
+        return False
     except Exception as e:
         print(f"Connect error: {e}")
         return False
@@ -72,45 +71,150 @@ def get_print_status():
             timeout=5
         )
         data = r.json()
-        filename = data.get("job", {}).get("file", {}).get("fileName", "Unknown")
-        progress = data.get("job", {}).get("fractionPrinted", 0)
+        filename     = data.get("job", {}).get("file", {}).get("fileName", "Unknown")
+        progress     = data.get("job", {}).get("fractionPrinted", 0)
         progress_pct = round(float(progress) * 100, 1) if progress else 0
         return filename, progress_pct
     except:
         return "Unknown", 0
 
-def send_email(filename, progress):
-    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
-    body = (
-        f"3D Printer Halted\n\n"
-        f"Time: {timestamp}\n"
-        f"File: {filename}\n"
-        f"Progress: {progress}%\n"
-        f"Come hither"
-    )
+def get_reply():
+    """Poll rr_reply to check if operator responded to M291 dialog."""
     try:
-        msg = MIMEText(body)
-        msg["Subject"] = "3D Printer Halted"
-        msg["From"] = EMAIL_SENDER
-        msg["To"] = EMAIL_RECIPIENT
+        r = requests.get(
+            f"{BASE_URL}/rr_reply",
+            headers={"X-Session-Key": str(session_key)},
+            timeout=5
+        )
+        return r.text.strip()
+    except:
+        return ""
 
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-            server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
-        print("Email sent")
+def send_announcement(filename, progress):
+    global active_announcement
+
+    if active_announcement:
+        print(f"Announcement already active: {active_announcement}, skipping.")
+        return
+
+    timestamp   = datetime.now(timezone.utc).isoformat()
+    description = (
+        f"The 3D printer has been halted via the emergency stop button.\n"
+        f"File: {filename}\n"
+        f"Progress at time of halt: {progress}%"
+    )
+    payload = {
+        "type":        "other",
+        "title":       "3D Printer Halted",
+        "description": description,
+        "createdBy":   CREATED_BY,
+        "dateCreated": timestamp,
+        "status":      "posted",
+    }
+    try:
+        r = requests.post(
+            ANNOUNCEMENT_URL,
+            json=payload,
+            headers={"x-internal-key": INTERNAL_KEY},
+            timeout=5
+        )
+        if r.status_code == 200:
+            active_announcement = r.json().get("uuid")
+            print(f"Announcement posted → {active_announcement}")
+        else:
+            print(f"Announcement failed: {r.status_code} {r.text}")
     except Exception as e:
-        print(f"Email error: {e}")
+        print(f"Announcement error: {e}")
+
+def delete_announcement():
+    global active_announcement
+
+    if not active_announcement:
+        return
+
+    try:
+        r = requests.delete(
+            f"{ANNOUNCEMENT_URL}/{active_announcement}",
+            headers={"x-internal-key": INTERNAL_KEY},
+            timeout=5
+        )
+        if r.status_code == 200:
+            print(f"Announcement deleted → {active_announcement}")
+            active_announcement = None
+        else:
+            print(f"Delete failed: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"Delete error: {e}")
+
+def poll_for_confirmation():
+    """
+    Poll rr_reply every POLL_INTERVAL seconds.
+    M291 S1 sets reply to:
+      - "OK" if operator pressed OK      → fix confirmed, delete announcement
+      - "Cancel" if operator pressed Cancel → ignore, keep announcement up
+    """
+    global printer_halted
+
+    print("Waiting for operator confirmation on Duet screen...")
+
+    while printer_halted:
+        time.sleep(POLL_INTERVAL)
+
+        if not connect_to_duet():
+            continue
+
+        reply = get_reply()
+
+        if not reply:
+            continue
+
+        print(f"Duet reply: {reply}")
+
+        if "ok" in reply.lower():
+            print("Operator confirmed fix — clearing announcement.")
+            delete_announcement()
+            printer_halted = False
+
+            # Notify on Duet screen that announcement is cleared
+            send_gcode('M291 P"Announcement cleared. Resume when ready." R"Fixed" S0')
+
+        elif "cancel" in reply.lower():
+            # Operator dismissed without fixing — re-show the dialog after a delay
+            print("Operator pressed Cancel — re-showing dialog in 30s.")
+            time.sleep(30)
+            if printer_halted:
+                send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
 
 def button_pressed(channel):
+    global printer_halted, poll_thread
+
+    if printer_halted:
+        print("Already halted, ignoring button press.")
+        return
+
     print("Button pressed! Halting printer...")
+
     if connect_to_duet():
         filename, progress = get_print_status()
+
+        # 1. Pause print
         send_gcode("M25")
         time.sleep(0.3)
-        send_gcode(f'M291 P"{HALT_MESSAGE}" R"Stopped" S0')
-        send_email(filename, progress)
-        print("Done.")
+
+        # 2. Show confirmation dialog on Duet screen
+        # S1 = OK + Cancel buttons
+        send_gcode(f'M291 P"{HALT_MESSAGE}" R"Printer Halted" S1')
+
+        # 3. Post announcement on website
+        send_announcement(filename, progress)
+
+        printer_halted = True
+
+        # 4. Start polling for operator response in background
+        poll_thread = threading.Thread(target=poll_for_confirmation, daemon=True)
+        poll_thread.start()
+
+        print("Done. Waiting for operator to confirm fix on Duet screen.")
     else:
         print("Could not reach Duet.")
 

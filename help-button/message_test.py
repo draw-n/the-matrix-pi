@@ -1,40 +1,34 @@
-import RPi.GPIO as GPIO
+# test_announcement.py
 import requests
-import smtplib
-from email.mime.text import MIMEText
+from datetime import datetime, timezone
 import configparser
-import time
 
-# --- Configuration ---
+# --- Load config ---
 config = configparser.ConfigParser()
 config.read("/home/matrix/the-matrix-pi/help-button/config.ini")
 
-BUTTON_PIN = 17
-DEBOUNCE_MS = 300
-HALT_MESSAGE = "Print halted by stop button"
+WEBSITE_URL      = config["website"]["url"]
+INTERNAL_KEY     = config["website"]["internal_key"]
+CREATED_BY       = config["website"]["announcement_created_by"]
+ANNOUNCEMENT_URL = f"{WEBSITE_URL}{config['website']['announcement_path']}"
 
-DUET_IP       = config["duet"]["ip"]
-DUET_PASSWORD = config["duet"]["password"]
-BASE_URL      = f"http://{DUET_IP}"
+payload = {
+    "type":        "other",
+    "title":       "3D Printer Halted",
+    "description": "Test announcement from Raspberry Pi.\nFile: test.gcode\nProgress: 42.0%",
+    "createdBy":   CREATED_BY,
+    "dateCreated": datetime.now(timezone.utc).isoformat(),
+    "status":      "posted",
+}
 
-EMAIL_SENDER    = config["email"]["sender"]
-EMAIL_PASSWORD  = config["email"]["app_password"]
-EMAIL_RECIPIENT = config["email"]["recipient"]
-# --- Email config ---
-SMTP_SERVER = "smtp.gmail.com"
-SMTP_PORT = 587
+print(f"Posting to: {ANNOUNCEMENT_URL}")
 
-try:
-    msg = MIMEText("message testttt")
-    msg["Subject"] = "3D Printer Halted"
-    msg["From"] = EMAIL_SENDER
-    msg["To"] = EMAIL_RECIPIENT
+r = requests.post(
+    ANNOUNCEMENT_URL,
+    json=payload,
+    headers={"x-internal-key": INTERNAL_KEY},
+    timeout=5
+)
 
-    with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-        server.starttls()
-        server.login(EMAIL_SENDER, EMAIL_PASSWORD)
-        server.sendmail(EMAIL_SENDER, EMAIL_RECIPIENT, msg.as_string())
-    print("Email sent")
-except Exception as e:
-    print(f"Email error: {e}")
-
+print(f"Status: {r.status_code}")
+print(f"Response: {r.json()}")
