@@ -4,10 +4,8 @@ set -e
 # Ensure we can find node, npm, and pm2
 export PATH=$PATH:/usr/local/bin:/usr/bin:/bin
 
-TARGET_DIR="/home/matrix/the-matrix-pi"
+TARGET_DIR="$(pwd)/.."
 CAMERA_DIR="$TARGET_DIR/camera"
-
-rm -f $TARGET_DIR/printer-state.json
 
 log() {
   echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
@@ -25,12 +23,13 @@ if [ -d "$CAMERA_DIR" ]; then
   docker compose up -d
 fi
 
-cd "$TARGET_DIR"
 
-# 5. Reload the App (PM2)
-# Using the full path ensures it never fails
-PM2_PATH=$(which pm2)
-log "Reloading application code..."
-$PM2_PATH reload matrix-queue || $PM2_PATH start index.js --name "matrix-queue"
+# 5. Reload the App (Systemd)
+if systemctl cat matrix-queue.service >/dev/null 2>&1; then
+	sudo systemctl restart matrix-queue.service
+else
+	./systemd.sh
+	sudo systemctl start matrix-queue.service
+fi
 
 log "Update complete."
